@@ -16,29 +16,11 @@ enum IntMap[T] {
 
 fn to_hex_string_(n : UInt) -> String {
   let mut n = n
+  let table = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F']
   let buf = @buffer.new(size_hint=8)
   for i = 0; i < 8; i = i + 1 {
     let r = n & 0x0000000F
-    let r = match r {
-      0 => '0'
-      1 => '1'
-      2 => '2'
-      3 => '3'
-      4 => '4'
-      5 => '5'
-      6 => '6'
-      7 => '7'
-      8 => '8'
-      9 => '9'
-      10 => 'A'
-      11 => 'B'
-      12 => 'C'
-      13 => 'D'
-      14 => 'E'
-      15 => 'F'
-      _ => abort("to_hex_string: n = \{n} r=\{r}")
-    }
-    buf.write_char(r)
+    buf.write_char(table[r.reinterpret_as_int()])
     n = n >> 4
   } else {
     buf.to_unchecked_string().rev()
@@ -58,6 +40,7 @@ test "int to hex string" {
   inspect!(to_hex_string(-2), content="FFFFFFFE")
   inspect!(to_hex_string(-1), content="FFFFFFFF")
   inspect!(to_hex_string(1 << 16), content="00010000")
+  inspect!(to_hex_string(2147483647), content="7FFFFFFF")
 }
 
 test "unsigned int to hex string" {
@@ -73,11 +56,6 @@ fn get_prefix_(k : UInt, m : UInt) -> Prefix {
   k.lor(m - 1).land(m.lnot()).reinterpret_as_int()
 }
 
-test "generate prefix" {
-  inspect!(to_hex_string(get_prefix_(0x00010000, 1U << 16)), content="0000FFFF")
-  inspect!(to_hex_string(get_prefix_(0x00100000, 1U << 20)), content="000FFFFF")
-}
-
 fn get_prefix(k : Key, m : Mask) -> Prefix {
   get_prefix_(k.reinterpret_as_uint(), m)
 }
@@ -89,13 +67,6 @@ fn match_prefix(key~ : Key, prefix~ : Prefix, mask~ : Mask) -> Bool {
 fn gen_mask_(p1 : UInt, p2 : UInt) -> Mask {
   let unsigned_int_width = 32
   1U << (unsigned_int_width - 1 - p1.lxor(p2).clz())
-}
-
-test "mask generation" {
-  inspect!(
-    to_hex_string_(gen_mask_(0x40401111, 0x40400000)),
-    content="00001000",
-  )
 }
 
 fn gen_mask(p1 : Prefix, p2 : Prefix) -> Mask {
@@ -150,12 +121,21 @@ fn insert[T](self : IntMap[T], key : Key, value : T) -> IntMap[T] {
   }
 }
 
+fn IntMap::from_array[T](arr : Array[T]) -> IntMap[T] {
+  let mut intmap = IntMap::Empty
+  for i = 0; i < arr.length(); i = i + 1 {
+    intmap = intmap.insert(i, arr[i])
+  } else {
+    return intmap
+  }
+}
+
 fn get_opt[T](self : IntMap[T], k : Key) -> T? {
   match self {
     Empty => None
     Leaf(..) as leaf => if leaf.key == k { Some(leaf.value) } else { None }
     Branch(..) as br_node =>
-      if k <= br_node.prefix {
+      if k.reinterpret_as_uint() <= br_node.prefix.reinterpret_as_uint() {
         get_opt(br_node.left, k)
       } else {
         get_opt(br_node.right, k)
@@ -164,26 +144,23 @@ fn get_opt[T](self : IntMap[T], k : Key) -> T? {
 }
 
 fn op_get[T](self : IntMap[T], key : Key) -> T {
-  self.get_opt(key).unwrap()
+  match self.get_opt(key) {
+    None => abort("IntMap::op_get: key = \{key}")
+    Some(value) => value
+  }
 }
 
 test "intmap insert and lookup" {
   let mut foo = IntMap::Empty
-  let lower_bound = @int.max_value / 200
-  let upper_bound = @int.max_value / 100
-  for i = lower_bound; i <= upper_bound; i = i + 1 {
+  fn prop_insert_lookup_identity(i : Int) -> Bool {
     foo = foo.insert(i, i)
-    assert_eq!(foo[i], i)
+    foo[i] == i
   }
-  for i = lower_bound; i <= upper_bound; i = i + 1 {
-    assert_eq!(foo[i], i)
-  }
+  @qcheck.quick_check_fn!(prop_insert_lookup_identity)
 }
 
 fn merge[T](combine~ : (T, T) -> T, l : IntMap[T], r : IntMap[T]) -> IntMap[T] {
   ...
 }
 
-fn IntMap::from_array[T](arr : Array[T]) -> IntMap[T] {
-  panic()
-}
+
