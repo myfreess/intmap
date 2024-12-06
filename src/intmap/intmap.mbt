@@ -16,7 +16,9 @@ enum IntMap[T] {
 
 fn to_hex_string_(n : UInt) -> String {
   let mut n = n
-  let table = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F']
+  let table = [
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F',
+  ]
   let buf = @buffer.new(size_hint=8)
   for i = 0; i < 8; i = i + 1 {
     let r = n & 0x0000000F
@@ -89,12 +91,12 @@ fn join[T](
   }
 }
 
-fn insert[T](self : IntMap[T], key : Key, value : T) -> IntMap[T] {
+fn insert_with[T](self : IntMap[T], combine~ : (T, T) -> T, key : Key, value : T) -> IntMap[T] {
   match self {
     Empty => Leaf(key~, value~)
     Leaf(..) as leaf =>
       if leaf.key == key {
-        Leaf(key~, value~)
+        Leaf(key~, value=combine(value, leaf.value))
       } else {
         join(key, Leaf(key~, value~), leaf.key, leaf)
       }
@@ -104,7 +106,7 @@ fn insert[T](self : IntMap[T], key : Key, value : T) -> IntMap[T] {
           Branch(
             prefix=br_node.prefix,
             mask=br_node.mask,
-            left=insert(br_node.left, key, value),
+            left=insert_with(combine~, br_node.left, key, value),
             right=br_node.right,
           )
         } else {
@@ -112,13 +114,21 @@ fn insert[T](self : IntMap[T], key : Key, value : T) -> IntMap[T] {
             prefix=br_node.prefix,
             mask=br_node.mask,
             left=br_node.left,
-            right=insert(br_node.right, key, value),
+            right=insert_with(combine~, br_node.right, key, value),
           )
         }
       } else {
         join(key, Leaf(key~, value~), br_node.prefix, br_node)
       }
   }
+}
+
+/// insert a new kay-value pair or replace original value if this key existed
+fn insert[T](self : IntMap[T], key : Key, value : T) -> IntMap[T] {
+  fn combine(new : T, old : T) -> T {
+    new
+  }
+  self.insert_with(combine~, key, value)
 }
 
 fn IntMap::from_array[T](arr : Array[T]) -> IntMap[T] {
@@ -156,11 +166,25 @@ test "intmap insert and lookup" {
     foo = foo.insert(i, i)
     foo[i] == i
   }
+
   @qcheck.quick_check_fn!(prop_insert_lookup_identity)
 }
 
-fn merge[T](combine~ : (T, T) -> T, l : IntMap[T], r : IntMap[T]) -> IntMap[T] {
-  ...
+fn merge_with[T](
+  combine~ : (T, T) -> T,
+  left : IntMap[T],
+  right : IntMap[T]
+) -> IntMap[T] {
+  fn merge(left : IntMap[T], right : IntMap[T]) -> IntMap[T] {
+    match (left, right) {
+      (t, Empty) => t
+      (Empty, t) => t
+      (Leaf(key~, value~), t) => insert_with(t, combine~, key, value)
+      (t, Leaf(key~, value~)) => {
+        let combine = fn (x, y) { combine(y, x) }
+        insert_with(t, combine~, key, value)
+      }
+    }
+  }
+  merge(left, right)
 }
-
-
